@@ -1,6 +1,6 @@
 {
-  "name": "xcode-mcp-shell",
-  "version": "0.1.0",
+  "name": "@devyhan/xcode-mcp",
+  "version": "0.1.1",
   "description": "MCP Server for executing shell commands from MCP clients, particularly useful for Xcode-related operations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -19,7 +19,7 @@
     "claude",
     "llm"
   ],
-  "author": "",
+  "author": "devyhan",
   "license": "ISC",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -30,9 +30,16 @@
     "typescript": "^5.3.3"
   },
   "bin": {
-    "xcode-mcp-shell": "dist/index.js"
+    "xcode-mcp": "dist/index.js"
   },
   "engines": {
     "node": ">=16.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devyhan/xcode-mcp.git"
   }
 }

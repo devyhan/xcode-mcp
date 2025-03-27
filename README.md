@@ -1,11 +1,11 @@
-# xcode-mcp-shell
+# @devyhan/xcode-mcp
 
 MCP(Model Context Protocol) 서버로, MCP 클라이언트에서 Shell 명령어를 실행할 수 있게 해주는 도구입니다. 특히 Xcode 관련 작업을 위한 도구들을 제공합니다.
 
 ## 설치
 
 ```bash
-npm install -g xcode-mcp-shell
+npm install -g @devyhan/xcode-mcp
 ```
 
 ## 사용 방법
@@ -23,8 +23,8 @@ npm install -g xcode-mcp-shell
    {
      "mcpServers": [
        {
-         "name": "xcode-mcp-shell",
-         "command": "xcode-mcp-shell"
+         "name": "xcode-mcp",
+         "command": "xcode-mcp"
        }
      ]
    }
