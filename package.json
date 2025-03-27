@@ -1,0 +1,38 @@
+{
+  "name": "xcode-mcp",
+  "version": "0.1.0",
+  "description": "MCP Server for executing shell commands from MCP clients",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc -w",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "xcode",
+    "shell",
+    "claude",
+    "llm"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
+  },
+  "bin": {
+    "xcode-mcp": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
