@@ -81,6 +81,32 @@ Configuration: Debug
 Destination: platform=iOS Simulator,name=iPhone 14
 ```
 
+### Example Scenario: Using with LLMs
+
+Below is an example of how you might prompt an LLM like Claude to use these tools in sequence:
+
+**User Prompt to Claude:**
+```
+I need to inspect my Xcode project and then build it.
+
+1. First, use the xcode-project-info tool to get information about my project at /Users/username/Projects/MyApp/MyApp.xcodeproj
+2. After you see the project info, identify the available schemes from the output.
+3. Then use the xcode-build tool to build my project with the first available scheme, using the Debug configuration and targeting the iOS Simulator.
+```
+
+**Expected Workflow:**
+1. Claude will execute the `xcode-project-info` tool to retrieve the project information
+2. Claude will analyze the output to identify available schemes
+3. Claude will then use the `xcode-build` tool with parameters filled from the information it discovered:
+   ```
+   Project path: /Users/username/Projects/MyApp/MyApp.xcodeproj
+   Scheme: [First scheme from project info]
+   Configuration: Debug
+   Destination: platform=iOS Simulator,name=iPhone 14
+   ```
+
+This workflow demonstrates how to chain multiple tools together, using the output from one tool to inform the parameters for another.
+
 ## Security Considerations
 
 This tool can execute shell commands, which poses security risks. Please note:
@@ -118,4 +144,4 @@ npm test
 
 ## License
 
-ISC
+MIT
