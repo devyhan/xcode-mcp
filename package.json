@@ -1,7 +1,7 @@
 {
-  "name": "xcode-mcp",
+  "name": "xcode-mcp-shell",
   "version": "0.1.0",
-  "description": "MCP Server for executing shell commands from MCP clients",
+  "description": "MCP Server for executing shell commands from MCP clients, particularly useful for Xcode-related operations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -30,7 +30,7 @@
     "typescript": "^5.3.3"
   },
   "bin": {
-    "xcode-mcp": "dist/index.js"
+    "xcode-mcp-shell": "dist/index.js"
   },
   "engines": {
     "node": ">=16.0.0"
