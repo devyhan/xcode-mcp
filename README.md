@@ -5,7 +5,7 @@ MCP(Model Context Protocol) 서버로, MCP 클라이언트에서 Shell 명령어
 ## 설치
 
 ```bash
-npm install -g @devyhan/xcode-mcp
+npm install @devyhan/xcode-mcp
 ```
 
 ## 사용 방법
@@ -21,12 +21,14 @@ npm install -g @devyhan/xcode-mcp
 2. 다음 내용을 추가하거나 수정합니다:
    ```json
    {
-     "mcpServers": [
-       {
-         "name": "xcode-mcp",
-         "command": "xcode-mcp"
+     "mcpServers": {
+       "xcode-mcp": {
+         "command": "npx",
+         "args": [
+           "@devyhan/xcode-mcp",
+           "-y"
+         ]
        }
-     ]
    }
    ```
 

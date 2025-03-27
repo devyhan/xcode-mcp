@@ -15,7 +15,7 @@ const execPromise = promisify(exec);
 async function main() {
   const server = new McpServer({
     name: "xcode-mcp",
-    version: "0.1.1",
+    version: "0.1.2",
     description: "MCP Server for executing shell commands, particularly useful for Xcode-related operations"
   });
 
