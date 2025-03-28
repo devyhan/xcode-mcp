@@ -11,7 +11,9 @@ An MCP (Model Context Protocol) server that provides tools for Xcode-related ope
 - Code signing and provisioning profile management
 - Swift Package Manager integration
 - iOS Simulator management via simctl
-- **NEW: Real Device App Deployment and Launch** using the `devicectl` command
+- **NEW: Real Device App Deployment and Launch** with automatic Xcode installation detection and improved device management
+- Intelligent handling of app installation failures with auto-retry
+- Smart caching of device and Xcode information for better performance
 
 
 ## Installation
@@ -284,7 +286,7 @@ xcrun simctl list devices --json
 }
 ```
 
-#### 9. run-on-device (ENHANCED)
+#### 9. run-on-device
 
 Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming. **Now with direct bundleId specification, skip build option, and additional launch arguments**.
 
@@ -306,7 +308,7 @@ Builds, installs, and runs an app on a physical iOS device. Supports device name
 ```
 Project path: /Users/username/Projects/MyApp/MyApp.xcodeproj
 Scheme: MyAppScheme
-Device: "조요한의 iPhone"
+Device: "Your-iPhone"
 Configuration: Debug
 StreamLogs: true
 EnvironmentVars: "DEBUG_MODE=1,API_URL=https://test-api.example.com"
@@ -319,7 +321,7 @@ EnvironmentVars: "DEBUG_MODE=1,API_URL=https://test-api.example.com"
 4. It retrieves the app's bundle identifier
 5. If requested, it streams the device logs
 
-**Key Improvements in v0.3.2**:
+**Key Improvements in v0.4.0**:
 - Ability to specify bundleId directly without needing a project
 - Skip build and install step for already installed apps
 - Support for additional devicectl launch command arguments

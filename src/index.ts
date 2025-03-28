@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import { executeCommand, findDeviceIdentifier, getBundleIdentifier, buildAndInstallApp, launchAppOnDevice, startDeviceLogStream, findDeviceInfo, getAllDevices } from './device-runner.js';
+import { executeCommand, findDeviceIdentifier, getBundleIdentifier, buildAndInstallApp, launchAppOnDevice, startDeviceLogStream, findDeviceInfo, getAllDevices, findXcodeInstallations, getDeviceCtlPath } from './device-runner.js';
 
 // 명령어 실행을 위한 promisify
 const execPromise = promisify(exec);
@@ -21,7 +21,7 @@ async function _executeCommand(command: string, workingDir?: string, timeout: nu
 async function main() {
   const server = new McpServer({
     name: "xcode-mcp",
-    version: "0.3.2",
+    version: "0.4.0",
     description: "MCP Server for executing shell commands, particularly useful for Xcode-related operations"
   });
 
@@ -543,7 +543,7 @@ async function main() {
     }
   );
 
-  // 10. 실제 기기에서 앱 실행 도구 (IMPROVED)
+  // 10. 실제 기기에서 앱 실행 도구
   server.tool(
     "run-on-device",
     {
@@ -560,19 +560,23 @@ async function main() {
       extraLaunchArgs: z.array(z.string()).optional().describe("devicectl launch 명령어에 전달할 추가 인자"),
       directBundleId: z.string().optional().describe("직접 지정할 번들 ID (프로젝트에서 추출하지 않음)")
     },
-    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app", listDevices = false, skipBuild = false, extraLaunchArgs = [], directBundleId }) => {
+    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath, listDevices = false, skipBuild = false, extraLaunchArgs = [], directBundleId }) => {
       try {
         console.error(`실제 기기에서 앱 실행 준비: ${projectPath}, 스킴: ${scheme}, 기기: ${device}`);
         
         // 0. 디바이스 목록 표시 (요청된 경우)
         if (listDevices) {
-          const allDevices = await getAllDevices();
+          // 캩0싱 무시하고 강제로 최신 디바이스 목록 가져오기
+          const allDevices = await getAllDevices(true);
           let deviceListText = "감지된 디바이스 목록:\n";
           allDevices.forEach(d => {
             deviceListText += `- ${d.name}\n`;
             if (d.xcodeId) deviceListText += `  Xcode ID: ${d.xcodeId}\n`;
             if (d.deviceCtlId) deviceListText += `  DeviceCtl ID: ${d.deviceCtlId}\n`;
-            deviceListText += `  상태: ${d.isAvailable ? '사용 가능' : '사용 불가'}\n\n`;
+            deviceListText += `  상태: ${d.isAvailable ? '사용 가능' : '사용 불가'}\n`;
+            if (d.model) deviceListText += `  모델: ${d.model}\n`;
+            if (d.osVersion) deviceListText += `  OS 버전: ${d.osVersion}\n`;
+            deviceListText += "\n";
           });
           
           return {
@@ -580,7 +584,16 @@ async function main() {
           };
         }
         
-        // 1. 디바이스 정보 찾기
+        // 1. 자동으로 Xcode 경로 찾기 (xcodePathw가 지정되지 않은 경우)
+        if (!xcodePath) {
+          const installations = await findXcodeInstallations();
+          if (installations.length > 0) {
+            xcodePath = installations[0].path;
+            console.error(`자동 감지된 Xcode 경로 사용: ${xcodePath}`);
+          }
+        }
+        
+        // 2. 디바이스 정보 찾기
         const deviceInfo = await findDeviceInfo(device);
         console.error(`디바이스 정보: ${JSON.stringify(deviceInfo)}`);
         
@@ -618,7 +631,7 @@ async function main() {
           console.error(`기기 OS 버전: ${deviceInfo.osVersion}`);
         }
         
-        // 번들 ID 가져오기
+        // 3. 번들 ID 가져오기
         let bundleId: string;
         if (directBundleId) {
           console.error(`사용자 지정 번들 ID 사용: ${directBundleId}`);
@@ -629,8 +642,31 @@ async function main() {
           console.error(`번들 ID: ${bundleId}`);
         }
         
-        // 빌드 및 설치 (선택적)
-        if (!skipBuild) {
+        // 4. devicectl 경로 찾기
+        const deviceCtlPath = await getDeviceCtlPath(xcodePath);
+        console.error(`devicectl 경로: ${deviceCtlPath}`);
+        
+        // 5. 앱 출력 경로 추정 (skipBuild = false만 사용)
+        let appPath: string | undefined;
+        if (!skipBuild && !directBundleId) {
+          try {
+            // 빌드 서적으로부터 앱 경로 추정
+            const derivedDataCmd = `xcodebuild -project "${projectPath}" -scheme "${scheme}" -showBuildSettings | grep CONFIGURATION_BUILD_DIR`;
+            const { stdout: derivedDataOutput } = await executeCommand(derivedDataCmd);
+            const match = derivedDataOutput.match(/CONFIGURATION_BUILD_DIR = (.*)/);
+            
+            if (match && match[1]) {
+              const buildDir = match[1].trim();
+              appPath = `${buildDir}/${scheme}.app`;
+              console.error(`추정된 앱 경로: ${appPath}`);
+            }
+          } catch (pathError) {
+            console.error(`앱 경로 추정 실패, 자동 재설치 기능을 사용할 수 없습니다: ${pathError}`);
+          }
+        }
+        
+        // 6. 빌드 및 설치 (선택적)
+        if (!skipBuild && !directBundleId) {
           console.error(`앱 빌드 및 설치 시작...`);
           await buildAndInstallApp(projectPath, scheme, xcodeDeviceId, configuration);
           console.error(`앱 빌드 및 설치 완료`);
@@ -638,7 +674,7 @@ async function main() {
           console.error(`빌드 및 설치 과정 건너뛰기`);
         }
         
-        // 4. 환경 변수 파싱
+        // 7. 환경 변수 파싱
         let envVars: Record<string, string> = {};
         if (environmentVars) {
           environmentVars.split(',').forEach(pair => {
@@ -649,29 +685,104 @@ async function main() {
           });
         }
         
-        // 5. 앱 실행 (DeviceCtl ID 사용)
+        // 8. 앱 실행 - 개선된 launchAppOnDevice 함수 사용
         console.error(`앱 실행 시작...`);
-        const launchResult = await launchAppOnDevice(
-          deviceCtlId, 
-          bundleId, 
-          xcodePath, 
-          envVars, 
-          startStopped,
-          extraLaunchArgs
-        );
-        
-        let resultText = `앱 실행 결과:\n${launchResult}\n`;
-        
-        // 6. 로그 스트리밍 (옵션이 활성화된 경우) (DeviceCtl ID 사용)
-        if (streamLogs) {
-          resultText += "\n로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.\n";
-          // 비동기적으로 로그 스트리밍 시작
-          startDeviceLogStream(deviceCtlId, bundleId, xcodePath);
-        }
+        try {
+          const launchResult = await launchAppOnDevice(
+            deviceCtlId, 
+            bundleId, 
+            xcodePath, 
+            envVars, 
+            startStopped,
+            extraLaunchArgs,
+            appPath // 자동 재설치를 위한 앱 경로 (필요한 경우)
+          );
+          
+          let resultText = `앱 실행 결과:\n${launchResult}\n`;
+          
+          // 9. 로그 스트리밍 (옵션이 활성화된 경우)
+          if (streamLogs) {
+            resultText += "\n로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.\n";
+            // 비동기적으로 로그 스트리밍 시작
+            startDeviceLogStream(deviceCtlId, bundleId, xcodePath);
+          }
 
-        return {
-          content: [{ type: "text", text: resultText }]
-        };
+          return {
+            content: [{ type: "text", text: resultText }]
+          };
+        } catch (launchError: any) {
+          // 실행 오류인 경우, 메시지 체크
+          if (launchError.message.includes('is not installed') && appPath) {
+            try {
+              // 앱이 설치되지 않은 경우 수동 설치 시도
+              console.error(`앱이 설치되지 않았습니다. 수동 설치 시도 중...`);
+              
+              // devicectl을 사용해 수동 설치
+              const installCmd = `"${deviceCtlPath}" device install app --device ${deviceCtlId} "${appPath}"`;
+              console.error(`실행할 설치 명령어: ${installCmd}`);
+              
+              const { stdout: installOutput } = await executeCommand(installCmd);
+              console.error(`설치 결과: ${installOutput}`);
+              
+              // 설치 후 다시 실행 시도
+              let retryLaunchCmd = `"${deviceCtlPath}" device process launch --device ${deviceCtlId}`;
+              
+              // 환경 변수 추가
+              if (Object.keys(envVars).length > 0) {
+                const envString = Object.entries(envVars)
+                  .map(([key, value]) => `${key}=${value}`)
+                  .join(",");
+                retryLaunchCmd += ` --environment-variables "${envString}"`;
+              }
+              
+              // 중단 모드로 시작 (디버깅용)
+              if (startStopped) {
+                retryLaunchCmd += " --start-stopped";
+              }
+              
+              // 추가 인자 적용
+              if (extraLaunchArgs.length > 0) {
+                retryLaunchCmd += " " + extraLaunchArgs.join(" ");
+              }
+              
+              // 번들 ID 추가
+              retryLaunchCmd += ` ${bundleId}`;
+              
+              console.error(`재시도 명령어: ${retryLaunchCmd}`);
+              const { stdout: retryOutput } = await executeCommand(retryLaunchCmd);
+              
+              let resultText = `앱 설치 및 실행 결과:\n설치: ${installOutput}\n실행: ${retryOutput}\n`;
+              
+              // 로그 스트리밍 (옵션이 활성화된 경우)
+              if (streamLogs) {
+                resultText += "\n로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.\n";
+                startDeviceLogStream(deviceCtlId, bundleId, xcodePath);
+              }
+              
+              return {
+                content: [{ type: "text", text: resultText }]
+              };
+            } catch (installError: any) {
+              console.error(`수동 설치 실패: ${installError.message}`);
+              return {
+                content: [{ 
+                  type: "text", 
+                  text: `앱이 설치되지 않았고, 수동 설치도 실패했습니다:\n${installError.message}\n${installError.stderr || ''}`
+                }],
+                isError: true
+              };
+            }
+          } else {
+            // 다른 오류인 경우
+            return {
+              content: [{ 
+                type: "text", 
+                text: `실제 기기에서 앱 실행 중 오류가 발생했습니다:\n${launchError.message}\n${launchError.stderr || ''}`
+              }],
+              isError: true
+            };
+          }
+        }
       } catch (error: any) {
         console.error(`실제 기기에서 앱 실행 오류: ${error.message}`);
         

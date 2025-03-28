@@ -1,7 +1,27 @@
 import { exec } from "child_process";
 import { promisify } from "util";
+import fs from 'fs';
+import path from 'path';
 
 const execPromise = promisify(exec);
+
+// 캐싱 매니저 - 메모리 내 캐시 저장
+interface CacheStorage {
+  xcodeInstallations?: XcodeInstallation[];
+  deviceCtlPaths?: Record<string, string>;
+  devicesList?: DeviceInfo[];
+  deviceListTimestamp?: number;
+  bundleIds?: Record<string, string>;
+}
+
+interface XcodeInstallation {
+  path: string;
+  version: string;
+  buildNumber?: string;
+}
+
+// 전역 캐시 저장소
+const cache: CacheStorage = {};
 
 // 내부 유틸리티: 명령어 실행 함수
 export async function executeCommand(command: string, workingDir?: string, timeout: number = 60000) {
@@ -28,6 +48,111 @@ export async function executeCommand(command: string, workingDir?: string, timeo
   }
 }
 
+/**
+ * 시스템에 설치된 Xcode 앱을 찾아서 목록을 반환합니다.
+ * 
+ * @returns Promise<XcodeInstallation[]> 설치된 Xcode 앱 정보 배열
+ */
+export async function findXcodeInstallations(): Promise<XcodeInstallation[]> {
+  // 캐싱된 값이 있으면 반환
+  if (cache.xcodeInstallations) {
+    return cache.xcodeInstallations;
+  }
+  
+  try {
+    // Applications 디렉토리에서 Xcode*.app 패턴의 파일 찾기
+    const { stdout } = await executeCommand('ls -d /Applications/Xcode*.app');
+    const xcodePaths = stdout.split('\n').filter(path => path.trim().length > 0);
+    
+    const installations: XcodeInstallation[] = [];
+    
+    // 각 Xcode 경로에 대해 버전 정보 추출
+    for (const xcodePath of xcodePaths) {
+      try {
+        // 버전 정보 추출 시도
+        const versionPlistPath = path.join(xcodePath, 'Contents/version.plist');
+        const versionCmd = `defaults read "${versionPlistPath}" CFBundleShortVersionString`;
+        const buildCmd = `defaults read "${versionPlistPath}" ProductBuildVersion`;
+        
+        const { stdout: versionOutput } = await executeCommand(versionCmd);
+        const { stdout: buildOutput } = await executeCommand(buildCmd);
+        
+        installations.push({
+          path: xcodePath,
+          version: versionOutput.trim(),
+          buildNumber: buildOutput.trim()
+        });
+      } catch (err) {
+        // 버전 정보를 찾을 수 없는 경우, 경로만 추가
+        installations.push({
+          path: xcodePath,
+          version: 'unknown'
+        });
+      }
+    }
+    
+    // 결과 캐싱 및 반환
+    cache.xcodeInstallations = installations;
+    return installations;
+  } catch (error) {
+    console.error('설치된 Xcode 찾기 오류:', error);
+    // 기본값으로 /Applications/Xcode.app 반환
+    return [{ path: '/Applications/Xcode.app', version: 'unknown' }];
+  }
+}
+
+/**
+ * devicectl 명령어 경로를 찾아서 반환합니다.
+ * 
+ * @param xcodePath Xcode 경로 (선택사항)
+ * @returns Promise<string> devicectl 명령어 경로
+ */
+export async function getDeviceCtlPath(xcodePath?: string): Promise<string> {
+  // 지정된 Xcode 경로가 있는 경우
+  if (xcodePath) {
+    // 캐싱된 경로가 있는지 확인
+    if (cache.deviceCtlPaths && cache.deviceCtlPaths[xcodePath]) {
+      return cache.deviceCtlPaths[xcodePath];
+    }
+    
+    const deviceCtlPath = `${xcodePath}/Contents/Developer/usr/bin/devicectl`;
+    
+    // 경로 존재 확인
+    try {
+      await fs.promises.access(deviceCtlPath, fs.constants.X_OK);
+      
+      // 경로 캐싱
+      if (!cache.deviceCtlPaths) cache.deviceCtlPaths = {};
+      cache.deviceCtlPaths[xcodePath] = deviceCtlPath;
+      
+      return deviceCtlPath;
+    } catch (error) {
+      console.error(`${deviceCtlPath}에서 devicectl을 찾을 수 없습니다.`);
+    }
+  }
+  
+  // Xcode 경로가 지정되지 않은 경우, 설치된 모든 Xcode에서 찾기
+  const installations = await findXcodeInstallations();
+  
+  for (const installation of installations) {
+    try {
+      const deviceCtlPath = `${installation.path}/Contents/Developer/usr/bin/devicectl`;
+      
+      // 경로 존재 확인
+      await fs.promises.access(deviceCtlPath, fs.constants.X_OK);
+      
+      // 경로 캐싱
+      if (!cache.deviceCtlPaths) cache.deviceCtlPaths = {};
+      cache.deviceCtlPaths[installation.path] = deviceCtlPath;
+      
+      return deviceCtlPath;
+    } catch {}
+  }
+  
+  // 기본값으로 표준 Xcode 경로 반환
+  return '/Applications/Xcode.app/Contents/Developer/usr/bin/devicectl';
+}
+
 // 디바이스 정보를 저장하는 인터페이스
 interface DeviceInfo {
   name: string;
@@ -43,9 +168,19 @@ interface DeviceInfo {
  * Xcode(xctrace)와 devicectl 두 가지 방식으로 디바이스를 식별하고
  * 두 식별자를 모두 매핑하여 통합된 결과를 반환합니다.
  * 
+ * @param forceRefresh 캐시를 무시하고 항상 새로 조회할지 여부
  * @returns DeviceInfo[] 디바이스 정보 배열
  */
-export async function getAllDevices(): Promise<DeviceInfo[]> {
+export async function getAllDevices(forceRefresh: boolean = false): Promise<DeviceInfo[]> {
+  // 캐싱된 값이 있고 시간이 5분 이내일 경우 캐싱된 값 반환
+  const CACHE_TIMEOUT = 5 * 60 * 1000; // 5분
+  const now = Date.now();
+  if (!forceRefresh && cache.devicesList && cache.deviceListTimestamp && 
+      (now - cache.deviceListTimestamp) < CACHE_TIMEOUT) {
+    console.error('캐싱된 디바이스 목록 사용');
+    return cache.devicesList;
+  }
+  
   try {
     const devices: DeviceInfo[] = [];
     
@@ -90,7 +225,9 @@ export async function getAllDevices(): Promise<DeviceInfo[]> {
     
     // 2. devicectl에서 디바이스 목록 가져오기 (CoreDevice UUID)
     try {
-      const { stdout: devicectlOutput } = await executeCommand('xcrun devicectl list devices');
+      // 자동으로 devicectl 경로 찾기
+      const deviceCtlPath = await getDeviceCtlPath();
+      const { stdout: devicectlOutput } = await executeCommand(`"${deviceCtlPath}" list devices`);
       const devicectlLines = devicectlOutput.split('\n');
       
       let startProcessing = false;
@@ -133,6 +270,10 @@ export async function getAllDevices(): Promise<DeviceInfo[]> {
     } catch (devicectlError) {
       console.error('devicectl 디바이스 목록 조회 오류:', devicectlError);
     }
+    
+    // 결과 캐싱 및 반환
+    cache.devicesList = devices;
+    cache.deviceListTimestamp = now;
     
     return devices;
   } catch (error) {
@@ -217,6 +358,12 @@ export async function findDeviceCtlIdentifier(nameOrId: string): Promise<string>
  */
 export async function getBundleIdentifier(projectPath: string, scheme: string): Promise<string> {
   try {
+    // 캐싱된 번들 ID가 있는지 확인
+    const cacheKey = `${projectPath}-${scheme}`;
+    if (cache.bundleIds && cache.bundleIds[cacheKey]) {
+      return cache.bundleIds[cacheKey];
+    }
+    
     // 프로젝트 정보에서 번들 ID 추출
     let command = 'xcodebuild -showBuildSettings';
     
@@ -232,7 +379,13 @@ export async function getBundleIdentifier(projectPath: string, scheme: string): 
     const match = stdout.match(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*(.+)$/);
     
     if (match && match[1]) {
-      return match[1].trim();
+      const bundleId = match[1].trim();
+      
+      // 번들 ID 캐싱
+      if (!cache.bundleIds) cache.bundleIds = {};
+      cache.bundleIds[cacheKey] = bundleId;
+      
+      return bundleId;
     }
     
     throw new Error("번들 식별자를 찾을 수 없습니다.");
@@ -274,13 +427,68 @@ export async function buildAndInstallApp(projectPath: string, scheme: string, de
   }
 }
 
-// 실제 기기에서 앱 실행 함수
-export async function launchAppOnDevice(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app", environmentVars: Record<string, string> = {}, startStopped: boolean = false, additionalArgs: string[] = []): Promise<string> {
+/**
+ * 앱을 기기에 직접 설치합니다.
+ * devicectl install 명령어 사용
+ * 
+ * @param deviceId devicectl 식별자(CoreDevice UUID)
+ * @param appPath 설치할 .app 경로
+ * @param xcodePath Xcode 애플리케이션 경로
+ * @returns Promise<string> 설치 결과
+ */
+export async function installAppOnDevice(deviceId: string, appPath: string, xcodePath?: string): Promise<string> {
+  try {
+    console.error(`앱 직접 설치: 기기 ${deviceId}, 앱 경로: ${appPath}`);
+    
+    // devicectl 경로 찾기
+    const deviceCtlPath = await getDeviceCtlPath(xcodePath);
+    
+    // devicectl 명령 구성
+    const command = `"${deviceCtlPath}" device install app --device ${deviceId} "${appPath}"`;
+    
+    console.error(`실행할 설치 명령어: ${command}`);
+    const { stdout, stderr } = await executeCommand(command);
+    
+    if (stderr && stderr.trim() !== "") {
+      console.error(`앱 설치 경고/오류: ${stderr}`);
+    }
+    
+    console.error("앱 설치 명령 완료", stdout);
+    
+    return stdout;
+  } catch (error: any) {
+    console.error(`앱 설치 오류: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * 실제 기기에서 앱 실행 함수
+ * 자동으로 deviceCtl 경로를 탐색하고, 앱 실행 실패 시 자동으로 재시도 로직 추가
+ * 
+ * @param deviceId devicectl 식별자(CoreDevice UUID)
+ * @param bundleId 앱 번들 ID
+ * @param xcodePath Xcode 애플리케이션 경로 (선택 사항)
+ * @param environmentVars 환경 변수 객체
+ * @param startStopped 일시 중지 상태로 시작할지 여부
+ * @param additionalArgs 추가 인자 배열
+ * @param appPath 앱이 설치되지 않은 경우 설치할 앱 경로 (선택 사항)
+ * @returns Promise<string> 실행 결과
+ */
+export async function launchAppOnDevice(
+  deviceId: string, 
+  bundleId: string, 
+  xcodePath?: string, 
+  environmentVars: Record<string, string> = {}, 
+  startStopped: boolean = false, 
+  additionalArgs: string[] = [],
+  appPath?: string
+): Promise<string> {
   try {
     console.error(`실제 기기에서 앱 실행: 기기 ${deviceId}, 번들 ID: ${bundleId}`);
     
-    // devicectl 경로 확인
-    const deviceCtlPath = `${xcodePath}/Contents/Developer/usr/bin/devicectl`;
+    // devicectl 경로 찾기
+    const deviceCtlPath = await getDeviceCtlPath(xcodePath);
     console.error(`devicectl 경로: ${deviceCtlPath}`);
     
     // devicectl 명령 구성
@@ -308,28 +516,61 @@ export async function launchAppOnDevice(deviceId: string, bundleId: string, xcod
     command += ` ${bundleId}`;
     
     console.error(`실행할 명령어: ${command}`);
-    const { stdout, stderr } = await executeCommand(command);
-    
-    if (stderr && stderr.trim() !== "") {
-      console.error(`앱 실행 경고/오류: ${stderr}`);
+    try {
+      const { stdout, stderr } = await executeCommand(command);
+      
+      if (stderr && stderr.trim() !== "") {
+        console.error(`앱 실행 경고/오류: ${stderr}`);
+      }
+      
+      console.error("앱 실행 명령 완료", stdout);
+      
+      return stdout;
+    } catch (launchError: any) {
+      // 앱이 설치되지 않은 경우 자동 설치 시도
+      if (launchError.message.includes('is not installed') && appPath) {
+        console.error(`앱이 설치되지 않았습니다. 자동 설치 시도...`);
+        
+        // 앱 설치 시도
+        await installAppOnDevice(deviceId, appPath, xcodePath);
+        
+        // 설치 후 다시 실행 시도
+        console.error(`설치 완료. 앱 다시 실행 시도...`);
+        const { stdout, stderr } = await executeCommand(command);
+        
+        if (stderr && stderr.trim() !== "") {
+          console.error(`앱 실행 경고/오류 (재시도): ${stderr}`);
+        }
+        
+        console.error("앱 실행 명령 완료 (재시도)", stdout);
+        
+        return stdout;
+      } else {
+        // 다른 오류일 경우 그대로 전파
+        throw launchError;
+      }
     }
-    
-    console.error("앱 실행 명령 완료", stdout);
-    
-    return stdout;
   } catch (error: any) {
     console.error(`앱 실행 오류: ${error.message}`);
     throw error;
   }
 }
 
-// 기기 로그 스트리밍 시작
-export async function startDeviceLogStream(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app", timeout: number = 300000): Promise<void> {
+/**
+ * 기기 로그 스트리밍 시작
+ * 
+ * @param deviceId devicectl 식별자(CoreDevice UUID)
+ * @param bundleId 앱 번들 ID
+ * @param xcodePath Xcode 애플리케이션 경로 (선택 사항)
+ * @param timeout 타임아웃 시간 (밀리초)
+ * @returns Promise<void>
+ */
+export async function startDeviceLogStream(deviceId: string, bundleId: string, xcodePath?: string, timeout: number = 300000): Promise<void> {
   try {
     console.error(`기기 로그 스트리밍 시작: 기기 ${deviceId}, 번들 ID: ${bundleId}`);
     
-    // devicectl 경로 확인
-    const deviceCtlPath = `${xcodePath}/Contents/Developer/usr/bin/devicectl`;
+    // devicectl 경로 찾기
+    const deviceCtlPath = await getDeviceCtlPath(xcodePath);
     
     // 비동기로 로그 스트리밍 실행
     const command = `"${deviceCtlPath}" device process view --device ${deviceId} --console ${bundleId}`;
