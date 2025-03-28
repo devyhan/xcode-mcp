@@ -1,6 +1,6 @@
-# @devyhan/xcode-mcp
+# xcode-mcp
 
-An MCP (Model Context Protocol) server that allows you to execute shell commands from MCP clients, with special tools for Xcode-related operations.
+An MCP (Model Context Protocol) server that provides tools for Xcode-related operations, making it easier to work with Xcode projects from MCP clients like Claude Desktop.
 
 ## Installation
 
@@ -37,21 +37,7 @@ npm install @devyhan/xcode-mcp
 
 ### Available Tools
 
-#### 1. execute-shell
-
-Executes shell commands and returns the results.
-
-**Parameters**:
-- `command` (required): The shell command to execute
-- `workingDir` (optional): Working directory where the command will be executed
-- `timeout` (optional): Command execution timeout in milliseconds, default: 60000ms
-
-**Example**:
-```
-Command: ls -la
-```
-
-#### 2. xcode-project-info
+#### 1. xcode-project-info
 
 Retrieves information about an Xcode project.
 
@@ -63,7 +49,7 @@ Retrieves information about an Xcode project.
 Project path: /Users/username/Projects/MyApp/MyApp.xcodeproj
 ```
 
-#### 3. xcode-build
+#### 2. xcode-build
 
 Builds an Xcode project.
 
@@ -109,11 +95,11 @@ This workflow demonstrates how to chain multiple tools together, using the outpu
 
 ## Security Considerations
 
-This tool can execute shell commands, which poses security risks. Please note:
+This tool can execute Xcode-related commands, which poses security risks. Please note:
 
-- Only execute commands you trust.
-- Commands that could damage your system (`rm -rf /`, `mkfs`, etc.) are blocked for security reasons.
-- Do not execute commands containing sensitive information.
+- Only use with trusted Xcode projects.
+- Be cautious with projects from unknown sources.
+- Do not include sensitive information in build parameters.
 
 ## Development
 
