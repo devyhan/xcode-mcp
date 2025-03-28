@@ -284,9 +284,9 @@ xcrun simctl list devices --json
 }
 ```
 
-#### 9. run-on-device (NEW)
+#### 9. run-on-device (IMPROVED)
 
-Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming.
+Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming. **Now supports both Xcode and CoreDevice (devicectl) identifiers properly**.
 
 **Parameters**:
 - `projectPath` (required): Path to the Xcode project (.xcodeproj) or workspace (.xcworkspace)
@@ -297,6 +297,7 @@ Builds, installs, and runs an app on a physical iOS device. Supports device name
 - `startStopped` (optional): Whether to start the app in a paused state for debugger attachment
 - `environmentVars` (optional): Environment variables to pass to the app (key1=value1,key2=value2 format)
 - `xcodePath` (optional): Xcode application path (default: "/Applications/Xcode-16.2.0.app")
+- `listDevices` (optional): Display all detected devices with their IDs before running
 
 **Example**:
 ```
@@ -309,11 +310,14 @@ EnvironmentVars: "DEBUG_MODE=1,API_URL=https://test-api.example.com"
 ```
 
 **Process**:
-1. The tool first identifies the device UUID from the provided name
-2. It builds and installs the app on the device
-3. It retrieves the app's bundle identifier
-4. It launches the app on the device using `devicectl`
+1. The tool identifies both Xcode UDID and CoreDevice UUID for the specified device
+2. It uses the Xcode UDID for building and installing the app
+3. It uses the CoreDevice UUID for launching the app with `devicectl`
+4. It retrieves the app's bundle identifier
 5. If requested, it streams the device logs
+
+**Key Improvement in v0.3.1**:
+Resolves the device identifier mismatch issue between Xcode and devicectl by maintaining a mapping between both identification systems.
 
 **Sample Output**:
 ```

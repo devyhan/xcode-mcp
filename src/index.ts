@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import { executeCommand, findDeviceIdentifier, getBundleIdentifier, buildAndInstallApp, launchAppOnDevice, startDeviceLogStream } from './device-runner.js';
+import { executeCommand, findDeviceIdentifier, getBundleIdentifier, buildAndInstallApp, launchAppOnDevice, startDeviceLogStream, findDeviceInfo, getAllDevices } from './device-runner.js';
 
 // 명령어 실행을 위한 promisify
 const execPromise = promisify(exec);
@@ -554,19 +554,62 @@ async function main() {
       streamLogs: z.boolean().optional().describe("앱 실행 후 로그 스트리밍 여부"),
       startStopped: z.boolean().optional().describe("디버거 연결을 위한 일시 중지 상태로 시작"),
       environmentVars: z.string().optional().describe("앱에 전달할 환경 변수 (key1=value1,key2=value2 형식)"),
-      xcodePath: z.string().optional().describe("Xcode 애플리케이션 경로")
+      xcodePath: z.string().optional().describe("Xcode 애플리케이션 경로"),
+      listDevices: z.boolean().optional().describe("실행 전 감지된 모든 디바이스 목록 표시")
     },
-    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app" }) => {
+    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app", listDevices = false }) => {
       try {
         console.error(`실제 기기에서 앱 실행 준비: ${projectPath}, 스킴: ${scheme}, 기기: ${device}`);
         
-        // 1. 기기 식별자 찾기
-        const deviceId = await findDeviceIdentifier(device);
-        console.error(`기기 식별자: ${deviceId}`);
+        // 0. 디바이스 목록 표시 (요청된 경우)
+        if (listDevices) {
+          const allDevices = await getAllDevices();
+          let deviceListText = "감지된 디바이스 목록:\n";
+          allDevices.forEach(d => {
+            deviceListText += `- ${d.name}\n`;
+            if (d.xcodeId) deviceListText += `  Xcode ID: ${d.xcodeId}\n`;
+            if (d.deviceCtlId) deviceListText += `  DeviceCtl ID: ${d.deviceCtlId}\n`;
+            deviceListText += `  상태: ${d.isAvailable ? '사용 가능' : '사용 불가'}\n\n`;
+          });
+          
+          return {
+            content: [{ type: "text", text: deviceListText }]
+          };
+        }
         
-        // 2. 앱 빌드 및 설치
+        // 1. 디바이스 정보 찾기
+        const deviceInfo = await findDeviceInfo(device);
+        console.error(`디바이스 정보: ${JSON.stringify(deviceInfo)}`);
+        
+        if (!deviceInfo.xcodeId) {
+          return {
+            content: [{ 
+              type: "text", 
+              text: `디바이스 '${deviceInfo.name}'의 Xcode 식별자(UDID)를 찾을 수 없습니다. 디바이스가 올바르게 연결되어 있는지 확인하세요.`
+            }],
+            isError: true
+          };
+        }
+        
+        if (!deviceInfo.deviceCtlId) {
+          return {
+            content: [{ 
+              type: "text", 
+              text: `디바이스 '${deviceInfo.name}'의 CoreDevice 식별자(UUID)를 찾을 수 없습니다. 디바이스가 올바르게 연결되어 있는지 확인하세요.`
+            }],
+            isError: true
+          };
+        }
+        
+        const xcodeDeviceId = deviceInfo.xcodeId;
+        const deviceCtlId = deviceInfo.deviceCtlId;
+        
+        console.error(`Xcode 식별자: ${xcodeDeviceId}`);
+        console.error(`DeviceCtl 식별자: ${deviceCtlId}`);
+        
+        // 2. 앱 빌드 및 설치 (Xcode ID 사용)
         console.error(`앱 빌드 및 설치 시작...`);
-        await buildAndInstallApp(projectPath, scheme, deviceId, configuration);
+        await buildAndInstallApp(projectPath, scheme, xcodeDeviceId, configuration);
         console.error(`앱 빌드 및 설치 완료`);
         
         // 3. 번들 ID 가져오기
@@ -585,17 +628,17 @@ async function main() {
           });
         }
         
-        // 5. 앱 실행
+        // 5. 앱 실행 (DeviceCtl ID 사용)
         console.error(`앱 실행 시작...`);
-        const launchResult = await launchAppOnDevice(deviceId, bundleId, xcodePath, envVars, startStopped);
+        const launchResult = await launchAppOnDevice(deviceCtlId, bundleId, xcodePath, envVars, startStopped);
         
         let resultText = `앱 실행 결과:\n${launchResult}\n`;
         
-        // 6. 로그 스트리밍 (옵션이 활성화된 경우)
+        // 6. 로그 스트리밍 (옵션이 활성화된 경우) (DeviceCtl ID 사용)
         if (streamLogs) {
           resultText += "\n로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.\n";
           // 비동기적으로 로그 스트리밍 시작
-          startDeviceLogStream(deviceId, bundleId, xcodePath);
+          startDeviceLogStream(deviceCtlId, bundleId, xcodePath);
         }
 
         return {

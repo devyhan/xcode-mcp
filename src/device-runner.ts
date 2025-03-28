@@ -28,34 +28,147 @@ export async function executeCommand(command: string, workingDir?: string, timeo
   }
 }
 
-// 기기 이름을 UUID로 변환하는 함수
-export async function findDeviceIdentifier(nameOrId: string): Promise<string> {
-  // 이미 UUID 형식인 경우 그대로 반환
-  if (/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(nameOrId)) {
-    return nameOrId;
-  }
+// 디바이스 정보를 저장하는 인터페이스
+interface DeviceInfo {
+  name: string;
+  xcodeId?: string; // xcrun/xcodebuild에서 사용하는 식별자 (UDID)
+  deviceCtlId?: string; // devicectl에서 사용하는 식별자 (CoreDevice UUID)
+  isAvailable: boolean;
+}
 
+// 모든 디바이스 목록 가져오기
+export async function getAllDevices(): Promise<DeviceInfo[]> {
   try {
-    // xcrun xctrace list devices 명령으로 기기 목록 가져오기
-    const { stdout } = await executeCommand('xcrun xctrace list devices');
-    const lines = stdout.split('\n');
-
-    // 이름이 포함된 줄 찾기 (한글 이름 포함)
-    for (const line of lines) {
-      if (line.includes(nameOrId)) {
-        // UUID 추출 (괄호 안의 형식: 00008110-001E68812609401E)
-        const match = line.match(/\(([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})\)/i);
-        if (match && match[1]) {
-          return match[1];
+    const devices: DeviceInfo[] = [];
+    
+    // 1. xctrace에서 디바이스 목록 가져오기 (UDID)
+    try {
+      const { stdout: xctraceOutput } = await executeCommand('xcrun xctrace list devices');
+      const xctraceLines = xctraceOutput.split('\n');
+      
+      for (const line of xctraceLines) {
+        // 실제 기기 및 오프라인 기기만 찾기 (시뮬레이터 제외)
+        if (line.includes('(') && !line.includes('Simulator') && !line.includes('==')) {
+          const nameMatch = line.match(/(.*?)\s+\(/);
+          const idMatch = line.match(/\(([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})\)/i);
+          
+          if (nameMatch && idMatch) {
+            const name = nameMatch[1].trim();
+            const xcodeId = idMatch[1];
+            
+            // 이미 존재하는 디바이스가 있는지 확인
+            const existingDevice = devices.find(d => d.name === name);
+            if (existingDevice) {
+              existingDevice.xcodeId = xcodeId;
+            } else {
+              devices.push({
+                name,
+                xcodeId,
+                isAvailable: !line.includes('Offline')
+              });
+            }
+          }
         }
       }
+    } catch (xctraceError) {
+      console.error('xctrace 디바이스 목록 조회 오류:', xctraceError);
     }
-
-    throw new Error(`기기를 찾을 수 없습니다: ${nameOrId}`);
-  } catch (error: any) {
-    console.error(`기기 식별자 검색 오류: ${error.message}`);
-    throw error;
+    
+    // 2. devicectl에서 디바이스 목록 가져오기 (CoreDevice UUID)
+    try {
+      const { stdout: devicectlOutput } = await executeCommand('xcrun devicectl list devices');
+      const devicectlLines = devicectlOutput.split('\n');
+      
+      let startProcessing = false;
+      for (const line of devicectlLines) {
+        if (line.includes('Name') && line.includes('Identifier')) {
+          startProcessing = true;
+          continue;
+        }
+        
+        if (startProcessing && line.trim() !== '' && !line.startsWith('--')) {
+          const columns = line.split(/\s{3,}/);
+          if (columns.length >= 4) {
+            const name = columns[0].trim();
+            const deviceCtlId = columns[2].trim();
+            const isAvailable = columns[3].includes('available') || columns[3].includes('connected');
+            
+            // 이미 존재하는 디바이스가 있는지 확인
+            const existingDevice = devices.find(d => 
+              d.name === name || 
+              (d.name.includes(name) || name.includes(d.name))
+            );
+            
+            if (existingDevice) {
+              existingDevice.deviceCtlId = deviceCtlId;
+              existingDevice.isAvailable = existingDevice.isAvailable || isAvailable;
+            } else {
+              devices.push({
+                name,
+                deviceCtlId,
+                isAvailable
+              });
+            }
+          }
+        }
+      }
+    } catch (devicectlError) {
+      console.error('devicectl 디바이스 목록 조회 오류:', devicectlError);
+    }
+    
+    return devices;
+  } catch (error) {
+    console.error('디바이스 목록 조회 오류:', error);
+    return [];
   }
+}
+
+// 디바이스 정보 가져오기
+export async function findDeviceInfo(nameOrId: string): Promise<DeviceInfo> {
+  const devices = await getAllDevices();
+  
+  // 먼저 정확한 ID로 검색
+  let device = devices.find(d => 
+    d.xcodeId === nameOrId || 
+    d.deviceCtlId === nameOrId
+  );
+  
+  // ID로 찾지 못한 경우 이름으로 검색
+  if (!device) {
+    device = devices.find(d => 
+      d.name === nameOrId || 
+      d.name.includes(nameOrId) || 
+      nameOrId.includes(d.name)
+    );
+  }
+  
+  if (!device) {
+    throw new Error(`기기를 찾을 수 없습니다: ${nameOrId}`);
+  }
+  
+  return device;
+}
+
+// 기기 이름을 UUID로 변환하는 함수 (빌드용 - xcodebuild/xcrun 식별자)
+export async function findDeviceIdentifier(nameOrId: string): Promise<string> {
+  const device = await findDeviceInfo(nameOrId);
+  
+  if (!device.xcodeId) {
+    throw new Error(`${device.name}의 Xcode 식별자를 찾을 수 없습니다.`);
+  }
+  
+  return device.xcodeId;
+}
+
+// devicectl용 식별자 가져오기
+export async function findDeviceCtlIdentifier(nameOrId: string): Promise<string> {
+  const device = await findDeviceInfo(nameOrId);
+  
+  if (!device.deviceCtlId) {
+    throw new Error(`${device.name}의 devicectl 식별자를 찾을 수 없습니다.`);
+  }
+  
+  return device.deviceCtlId;
 }
 
 // 번들 ID 가져오기
