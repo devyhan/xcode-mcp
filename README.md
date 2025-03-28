@@ -284,9 +284,9 @@ xcrun simctl list devices --json
 }
 ```
 
-#### 9. run-on-device (IMPROVED)
+#### 9. run-on-device (ENHANCED)
 
-Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming. **Now supports both Xcode and CoreDevice (devicectl) identifiers properly**.
+Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming. **Now with direct bundleId specification, skip build option, and additional launch arguments**.
 
 **Parameters**:
 - `projectPath` (required): Path to the Xcode project (.xcodeproj) or workspace (.xcworkspace)
@@ -298,6 +298,9 @@ Builds, installs, and runs an app on a physical iOS device. Supports device name
 - `environmentVars` (optional): Environment variables to pass to the app (key1=value1,key2=value2 format)
 - `xcodePath` (optional): Xcode application path (default: "/Applications/Xcode-16.2.0.app")
 - `listDevices` (optional): Display all detected devices with their IDs before running
+- `skipBuild` (optional): Skip the build and install step for already installed apps
+- `extraLaunchArgs` (optional): Additional arguments to pass to the devicectl launch command
+- `directBundleId` (optional): Directly specify the bundle ID instead of extracting from project
 
 **Example**:
 ```
@@ -316,15 +319,27 @@ EnvironmentVars: "DEBUG_MODE=1,API_URL=https://test-api.example.com"
 4. It retrieves the app's bundle identifier
 5. If requested, it streams the device logs
 
-**Key Improvement in v0.3.1**:
-Resolves the device identifier mismatch issue between Xcode and devicectl by maintaining a mapping between both identification systems.
+**Key Improvements in v0.3.2**:
+- Ability to specify bundleId directly without needing a project
+- Skip build and install step for already installed apps
+- Support for additional devicectl launch command arguments
+- Better device model and OS version information display
+- Improved path handling and logging for devicectl commands
 
 **Sample Output**:
 ```
+// Standard output with build and install
 앱 실행 결과:
 Launched application with com.example.myapp bundle identifier.
-
 로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.
+
+// Direct bundle ID usage with skip build
+기기 모델: iPhone14,7
+기기 OS 버전: 17.0
+사용자 지정 번들 ID 사용: com.example.myapp
+빌드 및 설치 과정 건너뛰기
+앱 실행 결과:
+Launched application with com.example.myapp bundle identifier.
 ```
 
 ### Example Scenario: Using with LLMs
@@ -376,7 +391,7 @@ I need to test my app on a real device:
 **Expected Workflow:**
 1. Claude will first get the list of devices:
    ```
-   Command: list
+   listDevices: true
    ```
 
 2. Claude will identify your physical device and run the app on it:
@@ -385,6 +400,13 @@ I need to test my app on a real device:
    Scheme: MyApp
    Device: "Your iPhone" (or the device UUID)
    StreamLogs: true
+   ```
+   
+3. For quick re-launch without rebuilding:
+   ```
+   Device: "Your iPhone"
+   DirectBundleId: "com.example.myapp"
+   SkipBuild: true
    ```
 
 ## Security Considerations

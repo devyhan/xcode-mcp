@@ -34,9 +34,17 @@ interface DeviceInfo {
   xcodeId?: string; // xcrun/xcodebuild에서 사용하는 식별자 (UDID)
   deviceCtlId?: string; // devicectl에서 사용하는 식별자 (CoreDevice UUID)
   isAvailable: boolean;
+  model?: string; // 기기 모델 정보 (예: iPhone14,7)
+  osVersion?: string; // OS 버전 정보
 }
 
-// 모든 디바이스 목록 가져오기
+/**
+ * 시스템에 연결된 모든 iOS 디바이스 목록을 가져옵니다.
+ * Xcode(xctrace)와 devicectl 두 가지 방식으로 디바이스를 식별하고
+ * 두 식별자를 모두 매핑하여 통합된 결과를 반환합니다.
+ * 
+ * @returns DeviceInfo[] 디바이스 정보 배열
+ */
 export async function getAllDevices(): Promise<DeviceInfo[]> {
   try {
     const devices: DeviceInfo[] = [];
@@ -61,10 +69,16 @@ export async function getAllDevices(): Promise<DeviceInfo[]> {
             if (existingDevice) {
               existingDevice.xcodeId = xcodeId;
             } else {
+              // 이름에서 모델명과 iOS 버전 추출 시도
+              const modelMatch = line.match(/\((iPhone|iPad|iPod|Watch)\d+,\d+\)/);
+              const osMatch = line.match(/\(\d+\.\d+(\.\d+)?\)/);
+              
               devices.push({
                 name,
                 xcodeId,
-                isAvailable: !line.includes('Offline')
+                isAvailable: !line.includes('Offline'),
+                model: modelMatch ? modelMatch[0].replace(/[()]/g, '') : undefined,
+                osVersion: osMatch ? osMatch[0].replace(/[()]/g, '') : undefined
               });
             }
           }
@@ -103,10 +117,14 @@ export async function getAllDevices(): Promise<DeviceInfo[]> {
               existingDevice.deviceCtlId = deviceCtlId;
               existingDevice.isAvailable = existingDevice.isAvailable || isAvailable;
             } else {
+              // devicectl 출력에서 추가 정보 추출
+              const modelInfo = columns.length >= 5 ? columns[4].trim() : undefined;
+              
               devices.push({
                 name,
                 deviceCtlId,
-                isAvailable
+                isAvailable,
+                model: modelInfo
               });
             }
           }
@@ -123,7 +141,14 @@ export async function getAllDevices(): Promise<DeviceInfo[]> {
   }
 }
 
-// 디바이스 정보 가져오기
+/**
+ * 디바이스 이름 또는 ID로 디바이스 정보를 찾습니다.
+ * 먼저 정확한 ID(xcodeId 또는 deviceCtlId)로 검색하고,
+ * 찾지 못한 경우 이름으로 검색합니다.
+ * 
+ * @param nameOrId 디바이스 이름 또는 ID
+ * @returns DeviceInfo 디바이스 정보
+ */
 export async function findDeviceInfo(nameOrId: string): Promise<DeviceInfo> {
   const devices = await getAllDevices();
   
@@ -149,7 +174,13 @@ export async function findDeviceInfo(nameOrId: string): Promise<DeviceInfo> {
   return device;
 }
 
-// 기기 이름을 UUID로 변환하는 함수 (빌드용 - xcodebuild/xcrun 식별자)
+/**
+ * 기기 이름 또는 ID를 Xcode 식별자(UDID)로 변환합니다.
+ * 주로 xcodebuild/xcrun 명령어에서 사용됩니다.
+ * 
+ * @param nameOrId 디바이스 이름 또는 ID
+ * @returns string Xcode 식별자(UDID)
+ */
 export async function findDeviceIdentifier(nameOrId: string): Promise<string> {
   const device = await findDeviceInfo(nameOrId);
   
@@ -160,7 +191,13 @@ export async function findDeviceIdentifier(nameOrId: string): Promise<string> {
   return device.xcodeId;
 }
 
-// devicectl용 식별자 가져오기
+/**
+ * 기기 이름 또는 ID를 devicectl 식별자(CoreDevice UUID)로 변환합니다.
+ * devicectl 명령어에서 사용됩니다.
+ * 
+ * @param nameOrId 디바이스 이름 또는 ID
+ * @returns string devicectl 식별자(CoreDevice UUID)
+ */
 export async function findDeviceCtlIdentifier(nameOrId: string): Promise<string> {
   const device = await findDeviceInfo(nameOrId);
   
@@ -171,7 +208,13 @@ export async function findDeviceCtlIdentifier(nameOrId: string): Promise<string>
   return device.deviceCtlId;
 }
 
-// 번들 ID 가져오기
+/**
+ * Xcode 프로젝트에서 번들 ID를 추출합니다.
+ * 
+ * @param projectPath Xcode 프로젝트 또는 워크스페이스 경로
+ * @param scheme 프로젝트 스킴
+ * @returns string 앱 번들 ID
+ */
 export async function getBundleIdentifier(projectPath: string, scheme: string): Promise<string> {
   try {
     // 프로젝트 정보에서 번들 ID 추출
@@ -199,7 +242,15 @@ export async function getBundleIdentifier(projectPath: string, scheme: string): 
   }
 }
 
-// 앱 빌드 및 설치 함수
+/**
+ * Xcode 프로젝트를 빌드하고 지정된 기기에 설치합니다.
+ * 
+ * @param projectPath Xcode 프로젝트 또는 워크스페이스 경로
+ * @param scheme 프로젝트 스킴
+ * @param deviceId Xcode 식별자(UDID)
+ * @param configuration 빌드 구성 (Debug, Release 등)
+ * @returns Promise<void>
+ */
 export async function buildAndInstallApp(projectPath: string, scheme: string, deviceId: string, configuration: string = "Debug"): Promise<void> {
   try {
     console.error(`앱 빌드 및 설치: ${projectPath}, 스킴: ${scheme}, 기기: ${deviceId}`);
@@ -224,12 +275,16 @@ export async function buildAndInstallApp(projectPath: string, scheme: string, de
 }
 
 // 실제 기기에서 앱 실행 함수
-export async function launchAppOnDevice(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app", environmentVars: Record<string, string> = {}, startStopped: boolean = false): Promise<string> {
+export async function launchAppOnDevice(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app", environmentVars: Record<string, string> = {}, startStopped: boolean = false, additionalArgs: string[] = []): Promise<string> {
   try {
     console.error(`실제 기기에서 앱 실행: 기기 ${deviceId}, 번들 ID: ${bundleId}`);
     
+    // devicectl 경로 확인
+    const deviceCtlPath = `${xcodePath}/Contents/Developer/usr/bin/devicectl`;
+    console.error(`devicectl 경로: ${deviceCtlPath}`);
+    
     // devicectl 명령 구성
-    let command = `${xcodePath}/Contents/Developer/usr/bin/devicectl device process launch --device ${deviceId}`;
+    let command = `"${deviceCtlPath}" device process launch --device ${deviceId}`;
     
     // 환경 변수 추가
     if (Object.keys(environmentVars).length > 0) {
@@ -244,10 +299,21 @@ export async function launchAppOnDevice(deviceId: string, bundleId: string, xcod
       command += " --start-stopped";
     }
     
+    // 추가 인자 적용
+    if (additionalArgs.length > 0) {
+      command += " " + additionalArgs.join(" ");
+    }
+    
     // 번들 ID 추가
     command += ` ${bundleId}`;
     
+    console.error(`실행할 명령어: ${command}`);
     const { stdout, stderr } = await executeCommand(command);
+    
+    if (stderr && stderr.trim() !== "") {
+      console.error(`앱 실행 경고/오류: ${stderr}`);
+    }
+    
     console.error("앱 실행 명령 완료", stdout);
     
     return stdout;
@@ -258,15 +324,29 @@ export async function launchAppOnDevice(deviceId: string, bundleId: string, xcod
 }
 
 // 기기 로그 스트리밍 시작
-export async function startDeviceLogStream(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app"): Promise<void> {
+export async function startDeviceLogStream(deviceId: string, bundleId: string, xcodePath: string = "/Applications/Xcode-16.2.0.app", timeout: number = 300000): Promise<void> {
   try {
     console.error(`기기 로그 스트리밍 시작: 기기 ${deviceId}, 번들 ID: ${bundleId}`);
     
-    // 비동기로 로그 스트리밍 실행
-    const command = `${xcodePath}/Contents/Developer/usr/bin/devicectl device process view --device ${deviceId} --console ${bundleId}`;
+    // devicectl 경로 확인
+    const deviceCtlPath = `${xcodePath}/Contents/Developer/usr/bin/devicectl`;
     
-    const { stdout, stderr } = await executeCommand(command);
-    console.error("로그 스트리밍 명령 완료");
+    // 비동기로 로그 스트리밍 실행
+    const command = `"${deviceCtlPath}" device process view --device ${deviceId} --console ${bundleId}`;
+    console.error(`실행할 로그 스트리밍 명령어: ${command}`);
+    
+    try {
+      // 로그 보기는 더 긴 타임아웃 설정 (5분)
+      const { stdout, stderr } = await executeCommand(command, undefined, timeout);
+      console.error("로그 스트리밍 명령 완료");
+    } catch (cmdError: any) {
+      // 로그 스트리밍은 종종 타임아웃될 수 있음 - 정상적인 동작
+      if (cmdError.message.includes('timeout')) {
+        console.error("로그 스트리밍 타임아웃 (예상된 동작)");
+      } else {
+        throw cmdError;
+      }
+    }
     
     return;
   } catch (error: any) {

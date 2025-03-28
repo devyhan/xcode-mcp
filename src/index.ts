@@ -21,7 +21,7 @@ async function _executeCommand(command: string, workingDir?: string, timeout: nu
 async function main() {
   const server = new McpServer({
     name: "xcode-mcp",
-    version: "0.3.0",
+    version: "0.3.2",
     description: "MCP Server for executing shell commands, particularly useful for Xcode-related operations"
   });
 
@@ -543,7 +543,7 @@ async function main() {
     }
   );
 
-  // 10. 실제 기기에서 앱 실행 도구 (NEW)
+  // 10. 실제 기기에서 앱 실행 도구 (IMPROVED)
   server.tool(
     "run-on-device",
     {
@@ -555,9 +555,12 @@ async function main() {
       startStopped: z.boolean().optional().describe("디버거 연결을 위한 일시 중지 상태로 시작"),
       environmentVars: z.string().optional().describe("앱에 전달할 환경 변수 (key1=value1,key2=value2 형식)"),
       xcodePath: z.string().optional().describe("Xcode 애플리케이션 경로"),
-      listDevices: z.boolean().optional().describe("실행 전 감지된 모든 디바이스 목록 표시")
+      listDevices: z.boolean().optional().describe("실행 전 감지된 모든 디바이스 목록 표시"),
+      skipBuild: z.boolean().optional().describe("이미 설치된 앱을 재실행할 때 빌드 및 설치 건너뛰기"),
+      extraLaunchArgs: z.array(z.string()).optional().describe("devicectl launch 명령어에 전달할 추가 인자"),
+      directBundleId: z.string().optional().describe("직접 지정할 번들 ID (프로젝트에서 추출하지 않음)")
     },
-    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app", listDevices = false }) => {
+    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app", listDevices = false, skipBuild = false, extraLaunchArgs = [], directBundleId }) => {
       try {
         console.error(`실제 기기에서 앱 실행 준비: ${projectPath}, 스킴: ${scheme}, 기기: ${device}`);
         
@@ -607,15 +610,33 @@ async function main() {
         console.error(`Xcode 식별자: ${xcodeDeviceId}`);
         console.error(`DeviceCtl 식별자: ${deviceCtlId}`);
         
-        // 2. 앱 빌드 및 설치 (Xcode ID 사용)
-        console.error(`앱 빌드 및 설치 시작...`);
-        await buildAndInstallApp(projectPath, scheme, xcodeDeviceId, configuration);
-        console.error(`앱 빌드 및 설치 완료`);
+        // 기기 추가 정보 표시
+        if (deviceInfo.model) {
+          console.error(`기기 모델: ${deviceInfo.model}`);
+        }
+        if (deviceInfo.osVersion) {
+          console.error(`기기 OS 버전: ${deviceInfo.osVersion}`);
+        }
         
-        // 3. 번들 ID 가져오기
-        console.error(`번들 ID 조회 중...`);
-        const bundleId = await getBundleIdentifier(projectPath, scheme);
-        console.error(`번들 ID: ${bundleId}`);
+        // 번들 ID 가져오기
+        let bundleId: string;
+        if (directBundleId) {
+          console.error(`사용자 지정 번들 ID 사용: ${directBundleId}`);
+          bundleId = directBundleId;
+        } else {
+          console.error(`번들 ID 조회 중...`);
+          bundleId = await getBundleIdentifier(projectPath, scheme);
+          console.error(`번들 ID: ${bundleId}`);
+        }
+        
+        // 빌드 및 설치 (선택적)
+        if (!skipBuild) {
+          console.error(`앱 빌드 및 설치 시작...`);
+          await buildAndInstallApp(projectPath, scheme, xcodeDeviceId, configuration);
+          console.error(`앱 빌드 및 설치 완료`);
+        } else {
+          console.error(`빌드 및 설치 과정 건너뛰기`);
+        }
         
         // 4. 환경 변수 파싱
         let envVars: Record<string, string> = {};
@@ -630,7 +651,14 @@ async function main() {
         
         // 5. 앱 실행 (DeviceCtl ID 사용)
         console.error(`앱 실행 시작...`);
-        const launchResult = await launchAppOnDevice(deviceCtlId, bundleId, xcodePath, envVars, startStopped);
+        const launchResult = await launchAppOnDevice(
+          deviceCtlId, 
+          bundleId, 
+          xcodePath, 
+          envVars, 
+          startStopped,
+          extraLaunchArgs
+        );
         
         let resultText = `앱 실행 결과:\n${launchResult}\n`;
         

@@ -1,6 +1,6 @@
 {
   "name": "@devyhan/xcode-mcp",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MCP Server for executing shell commands from MCP clients, particularly useful for Xcode-related operations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
