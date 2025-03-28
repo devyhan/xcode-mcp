@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server that provides tools for Xcode-related ope
 - Code signing and provisioning profile management
 - Swift Package Manager integration
 - iOS Simulator management via simctl
-- Tuist project management support
+
 
 ## Installation
 
@@ -281,33 +281,6 @@ xcrun simctl list devices --json
     ]
   }
 }
-```
-
-#### 9. tuist-manager
-
-Provides access to Tuist project management functionality. Tuist is a tool that helps with Xcode project generation and management. Supports common Tuist commands like generate, clean, build, test, run, graph, scaffold, and edit.
-
-**Parameters**:
-- `command` (required): Tuist command ("generate", "clean", "build", "test", "run", "graph", "scaffold", "edit")
-- `projectDir` (required): Directory path of the Tuist project
-- `extraArgs` (optional): Additional Tuist arguments as array of strings
-
-**Example**:
-```
-Command: generate
-ProjectDir: /Users/username/Projects/MyTuistProject
-ExtraArgs: ["--no-open"]
-```
-
-**Command Generated**:
-```
-cd "/Users/username/Projects/MyTuistProject" && tuist generate --no-open
-```
-
-**Sample Output**:
-```
-Generating project...
-Project generated at /Users/username/Projects/MyTuistProject/MyTuistProject.xcodeproj
 ```
 
 ### Example Scenario: Using with LLMs
