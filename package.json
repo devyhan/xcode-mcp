@@ -1,6 +1,6 @@
 {
   "name": "@devyhan/xcode-mcp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "MCP Server for executing shell commands from MCP clients, particularly useful for Xcode-related operations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,7 +17,9 @@
     "xcode",
     "shell",
     "claude",
-    "llm"
+    "llm",
+    "ios",
+    "devicectl"
   ],
   "author": "devyhan",
   "license": "MIT",

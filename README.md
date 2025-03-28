@@ -11,6 +11,7 @@ An MCP (Model Context Protocol) server that provides tools for Xcode-related ope
 - Code signing and provisioning profile management
 - Swift Package Manager integration
 - iOS Simulator management via simctl
+- **NEW: Real Device App Deployment and Launch** using the `devicectl` command
 
 
 ## Installation
@@ -283,6 +284,45 @@ xcrun simctl list devices --json
 }
 ```
 
+#### 9. run-on-device (NEW)
+
+Builds, installs, and runs an app on a physical iOS device. Supports device name (including Korean names) or UUID for device selection, environment variables, and log streaming.
+
+**Parameters**:
+- `projectPath` (required): Path to the Xcode project (.xcodeproj) or workspace (.xcworkspace)
+- `scheme` (required): The scheme to build and run
+- `device` (required): Device identifier or name (supports Korean names)
+- `configuration` (optional): Build configuration (e.g., Debug, Release)
+- `streamLogs` (optional): Whether to stream device logs after launching
+- `startStopped` (optional): Whether to start the app in a paused state for debugger attachment
+- `environmentVars` (optional): Environment variables to pass to the app (key1=value1,key2=value2 format)
+- `xcodePath` (optional): Xcode application path (default: "/Applications/Xcode-16.2.0.app")
+
+**Example**:
+```
+Project path: /Users/username/Projects/MyApp/MyApp.xcodeproj
+Scheme: MyAppScheme
+Device: "조요한의 iPhone"
+Configuration: Debug
+StreamLogs: true
+EnvironmentVars: "DEBUG_MODE=1,API_URL=https://test-api.example.com"
+```
+
+**Process**:
+1. The tool first identifies the device UUID from the provided name
+2. It builds and installs the app on the device
+3. It retrieves the app's bundle identifier
+4. It launches the app on the device using `devicectl`
+5. If requested, it streams the device logs
+
+**Sample Output**:
+```
+앱 실행 결과:
+Launched application with com.example.myapp bundle identifier.
+
+로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.
+```
+
 ### Example Scenario: Using with LLMs
 
 Below is an example of how you might prompt an LLM like Claude to use these tools in sequence:
@@ -319,6 +359,30 @@ I need to inspect my Xcode project, run some tests, and then archive it for dist
 
 This workflow demonstrates how to chain multiple tools together, using the output from one tool to inform the parameters for another.
 
+### Example: Running on a Real Device
+
+**User Prompt to Claude:**
+```
+I need to test my app on a real device:
+
+1. Get the list of available devices (including connected physical devices)
+2. Run my app on my connected iPhone 
+```
+
+**Expected Workflow:**
+1. Claude will first get the list of devices:
+   ```
+   Command: list
+   ```
+
+2. Claude will identify your physical device and run the app on it:
+   ```
+   Project path: /Users/username/Projects/MyApp/MyApp.xcodeproj
+   Scheme: MyApp
+   Device: "Your iPhone" (or the device UUID)
+   StreamLogs: true
+   ```
+
 ## Security Considerations
 
 This tool can execute Xcode-related commands, which poses security risks. Please note:
@@ -333,6 +397,8 @@ This tool can execute Xcode-related commands, which poses security risks. Please
 
 - Node.js 16 or higher
 - npm 6 or higher
+- Xcode 14 or higher (for all features)
+- Xcode 16 or higher (required for `devicectl` and real device features)
 
 ### Local Development and Testing
 

@@ -5,33 +5,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
+import { executeCommand, findDeviceIdentifier, getBundleIdentifier, buildAndInstallApp, launchAppOnDevice, startDeviceLogStream } from './device-runner.js';
 
 // 명령어 실행을 위한 promisify
 const execPromise = promisify(exec);
 
-// 내부 유틸리티: 명령어 실행 함수 (LLM에 노출되지 않음)
-async function executeCommand(command: string, workingDir?: string, timeout: number = 60000) {
-  try {
-    console.error(`명령어 실행: ${command} in ${workingDir || 'current directory'}`);
-    
-    // 보안 상의 이유로 위험한 명령어 필터링
-    if (/rm\s+-rf\s+\//.test(command) || /mkfs/.test(command) || /dd\s+if/.test(command)) {
-      throw new Error("보안상의 이유로 이 명령어를 실행할 수 없습니다.");
-    }
-
-    const options = {
-      cwd: workingDir,
-      timeout: timeout,
-      // 버퍼 제한 제거
-      maxBuffer: Infinity
-    };
-
-    const { stdout, stderr } = await execPromise(command, options);
-    return { stdout, stderr };
-  } catch (error: any) {
-    console.error(`명령어 실행 오류: ${error.message}`);
-    throw error;
-  }
+// 내부 유틸리티: 명령어 실행 함수 (LLM에 노출되지 않음) - 이전 버전 호환성 유지
+async function _executeCommand(command: string, workingDir?: string, timeout: number = 60000) {
+  return executeCommand(command, workingDir, timeout);
 }
 
 /**
@@ -40,7 +21,7 @@ async function executeCommand(command: string, workingDir?: string, timeout: num
 async function main() {
   const server = new McpServer({
     name: "xcode-mcp",
-    version: "0.2.2",
+    version: "0.3.0",
     description: "MCP Server for executing shell commands, particularly useful for Xcode-related operations"
   });
 
@@ -555,6 +536,78 @@ async function main() {
           content: [{ 
             type: "text", 
             text: `SimCtl 명령 실행 중 오류가 발생했습니다:\n${error.message}\n${error.stderr || ''}`
+          }],
+          isError: true
+        };
+      }
+    }
+  );
+
+  // 10. 실제 기기에서 앱 실행 도구 (NEW)
+  server.tool(
+    "run-on-device",
+    {
+      projectPath: z.string().describe("Xcode 프로젝트 또는 워크스페이스 경로"),
+      scheme: z.string().describe("빌드 및 실행할 스킴"),
+      device: z.string().describe("기기 식별자 또는 이름 (한글 이름 지원)"),
+      configuration: z.string().optional().describe("빌드 구성 (Debug/Release)"),
+      streamLogs: z.boolean().optional().describe("앱 실행 후 로그 스트리밍 여부"),
+      startStopped: z.boolean().optional().describe("디버거 연결을 위한 일시 중지 상태로 시작"),
+      environmentVars: z.string().optional().describe("앱에 전달할 환경 변수 (key1=value1,key2=value2 형식)"),
+      xcodePath: z.string().optional().describe("Xcode 애플리케이션 경로")
+    },
+    async ({ projectPath, scheme, device, configuration = "Debug", streamLogs = false, startStopped = false, environmentVars = "", xcodePath = "/Applications/Xcode-16.2.0.app" }) => {
+      try {
+        console.error(`실제 기기에서 앱 실행 준비: ${projectPath}, 스킴: ${scheme}, 기기: ${device}`);
+        
+        // 1. 기기 식별자 찾기
+        const deviceId = await findDeviceIdentifier(device);
+        console.error(`기기 식별자: ${deviceId}`);
+        
+        // 2. 앱 빌드 및 설치
+        console.error(`앱 빌드 및 설치 시작...`);
+        await buildAndInstallApp(projectPath, scheme, deviceId, configuration);
+        console.error(`앱 빌드 및 설치 완료`);
+        
+        // 3. 번들 ID 가져오기
+        console.error(`번들 ID 조회 중...`);
+        const bundleId = await getBundleIdentifier(projectPath, scheme);
+        console.error(`번들 ID: ${bundleId}`);
+        
+        // 4. 환경 변수 파싱
+        let envVars: Record<string, string> = {};
+        if (environmentVars) {
+          environmentVars.split(',').forEach(pair => {
+            const [key, value] = pair.split('=');
+            if (key && value) {
+              envVars[key] = value;
+            }
+          });
+        }
+        
+        // 5. 앱 실행
+        console.error(`앱 실행 시작...`);
+        const launchResult = await launchAppOnDevice(deviceId, bundleId, xcodePath, envVars, startStopped);
+        
+        let resultText = `앱 실행 결과:\n${launchResult}\n`;
+        
+        // 6. 로그 스트리밍 (옵션이 활성화된 경우)
+        if (streamLogs) {
+          resultText += "\n로그 스트리밍이 시작되었습니다. 로그는 터미널에서 확인할 수 있습니다.\n";
+          // 비동기적으로 로그 스트리밍 시작
+          startDeviceLogStream(deviceId, bundleId, xcodePath);
+        }
+
+        return {
+          content: [{ type: "text", text: resultText }]
+        };
+      } catch (error: any) {
+        console.error(`실제 기기에서 앱 실행 오류: ${error.message}`);
+        
+        return {
+          content: [{ 
+            type: "text", 
+            text: `실제 기기에서 앱 실행 중 오류가 발생했습니다:\n${error.message}\n${error.stderr || ''}`
           }],
           isError: true
         };
